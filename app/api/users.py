@@ -5,7 +5,7 @@ from app.models.user import User as UserModel
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional
-import hashlib  # temporary, will switch to bcrypt
+from app.utils.security import hash_password
 
 router = APIRouter(
     prefix="/users",
@@ -91,7 +91,7 @@ def create_user(user: CreateUser, db: Session = Depends(get_db)):
             detail="Email already registered"
         )
 
-    hashed_password = hashlib.sha256(user.password.encode()).hexdigest()
+    hashed_password = hash_password(user.password)
 
     new_user = UserModel(
         username=user.username,
