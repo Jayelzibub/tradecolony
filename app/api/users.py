@@ -4,6 +4,7 @@ from app.db import get_db
 from app.models.user import User as UserModel
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
+from typing import Optional
 import hashlib  # temporary, will switch to bcrypt
 
 router = APIRouter(
@@ -20,18 +21,65 @@ class User(BaseModel):
     is_admin: bool
     notification_email_enabled: bool = True
     notification_sms_enabled: bool = False
-    timezone: str = "UTC"
+    timezone: Optional[str] = None  # ← change here
     created_at: datetime
-    updated_at: datetime | None = None
+    updated_at: Optional[datetime] = None
+    is_forgotten: bool
+    forgotten_at: Optional[datetime] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True  # ← updated for Pydantic v2
 
 class CreateUser(BaseModel):
     username: str
     email: EmailStr
     password: str
     timezone: str = "UTC"
+
+class UpdateUser(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+    notification_email_enabled: Optional[bool] = None
+    notification_sms_enabled: Optional[bool] = None
+    timezone: Optional[str] = None
+
+
+# ---- Route: GET /users ----
+@router.get("/", response_model=list[User])
+def get_users(
+    skip: int = 0,
+    limit: int = 10,
+    username: Optional[str] = None,
+    email: Optional[EmailStr] = None,
+    is_active: Optional[bool] = None,
+    is_admin: Optional[bool] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(UserModel)
+
+    if username:
+        query = query.filter(UserModel.username == username)
+    if email:
+        query = query.filter(UserModel.email == email)
+    if is_active is not None:
+        query = query.filter(UserModel.is_active == is_active)
+    if is_admin is not None:
+        query = query.filter(UserModel.is_admin == is_admin)
+
+    users = query.offset(skip).limit(limit).all()
+    return users
+
+@router.get("/{user_id}", response_model=User)
+def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return user
 
 # ---- Route: POST /users ----
 @router.post("/", response_model=User)
@@ -62,3 +110,72 @@ def create_user(user: CreateUser, db: Session = Depends(get_db)):
     db.refresh(new_user)
 
     return new_user
+
+# ---- Route: PATCH /users ----
+@router.patch("/{user_id}", response_model=User)
+def update_user(user_id: int, updates: UpdateUser, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if updates.password:
+        user.hashed_password = hashlib.sha256(updates.password.encode()).hexdigest()
+
+    if updates.username is not None:
+        user.username = updates.username
+    if updates.is_active is not None:
+        user.is_active = updates.is_active
+    if updates.is_admin is not None:
+        user.is_admin = updates.is_admin
+    if updates.notification_email_enabled is not None:
+        user.notification_email_enabled = updates.notification_email_enabled
+    if updates.notification_sms_enabled is not None:
+        user.notification_sms_enabled = updates.notification_sms_enabled
+    if updates.timezone is not None:
+        user.timezone = updates.timezone
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+# ---- Route: DELETE /users ----
+# ---- Soft Delete(De-Activate)
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def deactivate_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    user.is_active = False
+    db.commit()
+    return
+
+@router.delete("/{user_id}/forget", status_code=status.HTTP_204_NO_CONTENT)
+def forget_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    user.username = f"deleted_user_{user_id}"
+    user.email = f"deleted_user_{user_id}@example.com"
+    user.hashed_password = ""
+    user.timezone = None
+    user.is_active = False
+    user.notification_email_enabled = False
+    user.notification_sms_enabled = False
+    user.is_forgotten = True
+    user.forgotten_at = datetime.utcnow()
+
+    db.commit()
+    return
