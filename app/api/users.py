@@ -55,6 +55,7 @@ def get_users(
     email: Optional[EmailStr] = None,
     is_active: Optional[bool] = None,
     is_admin: Optional[bool] = None,
+    sort_order: str = "asc",  # <-- new query param
     db: Session = Depends(get_db)
 ):
     query = db.query(UserModel)
@@ -67,6 +68,11 @@ def get_users(
         query = query.filter(UserModel.is_active == is_active)
     if is_admin is not None:
         query = query.filter(UserModel.is_admin == is_admin)
+
+    if sort_order == "desc":
+        query = query.order_by(UserModel.id.desc())
+    else:
+        query = query.order_by(UserModel.id.asc())
 
     users = query.offset(skip).limit(limit).all()
     return users
@@ -84,11 +90,18 @@ def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
 # ---- Route: POST /users ----
 @router.post("/", response_model=User)
 def create_user(user: CreateUser, db: Session = Depends(get_db)):
-    existing_user = db.query(UserModel).filter(UserModel.email == user.email).first()
-    if existing_user:
+    # Check for duplicate email
+    if db.query(UserModel).filter(UserModel.email == user.email).first():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email already registered"
+        )
+    
+    # Check for duplicate username
+    if db.query(UserModel).filter(UserModel.username == user.username).first():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
         )
 
     hashed_password = hash_password(user.password)
@@ -109,7 +122,6 @@ def create_user(user: CreateUser, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
-    return new_user
 
 # ---- Route: PATCH /users ----
 @router.patch("/{user_id}", response_model=User)
