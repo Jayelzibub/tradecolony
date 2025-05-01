@@ -1,53 +1,43 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.orm import Session
-from app.db import get_db
-from app.models.user import User as UserModel
-from pydantic import BaseModel, EmailStr, ConfigDict
+"""
+users.py
+
+Exposes user management endpoints.
+
+Includes:
+- Get all users (with optional filters)
+- Retrieve user by ID
+- Create new user
+- Update user details
+- Deactivate user (soft delete)
+- Forget user (GDPR-style data anonymisation)
+"""
+
 from datetime import datetime
 from typing import Optional
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Query,
+)
+from sqlalchemy.orm import Session
+from pydantic import EmailStr
+
+from app.db import get_db
+from app.models.user import User as UserModel
 from app.auth.password import hash_password
 from app.schemas.user import User, CreateUser, UpdateUser
-
 
 router = APIRouter(
     prefix="/users",
     tags=["users"]
 )
 
-# ---- Pydantic Schemas ----
-class User(BaseModel):
-    id: int
-    username: str
-    email: EmailStr
-    is_active: bool
-    is_admin: bool
-    notification_email_enabled: bool = True
-    notification_sms_enabled: bool = False
-    timezone: Optional[str] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    is_forgotten: bool
-    forgotten_at: Optional[datetime] = None
 
-    model_config = ConfigDict(from_attributes=True)
-
-class CreateUser(BaseModel):
-    username: str
-    email: EmailStr
-    password: str
-    timezone: str = "UTC"
-
-class UpdateUser(BaseModel):
-    username: Optional[str] = None
-    password: Optional[str] = None
-    is_active: Optional[bool] = None
-    is_admin: Optional[bool] = None
-    notification_email_enabled: Optional[bool] = None
-    notification_sms_enabled: Optional[bool] = None
-    timezone: Optional[str] = None
-
-
-# ---- Route: GET /users ----
+# ---- GET /users ----
+# Retrieve all users with optional filters and pagination.
 @router.get("/", response_model=list[User])
 def get_users(
     skip: int = 0,
@@ -75,32 +65,27 @@ def get_users(
     else:
         query = query.order_by(UserModel.id.asc())
 
-    users = query.offset(skip).limit(limit).all()
-    return users
+    return query.offset(skip).limit(limit).all()
 
+
+# ---- GET /users/{user_id} ----
+# Retrieve a user by their ID.
 @router.get("/{user_id}", response_model=User)
 def get_user_by_id(user_id: int, db: Session = Depends(get_db)):
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return user
 
-# ---- Route: POST /users ----
+
+# ---- POST /users ----
+# Create a new user if username and email are unique.
 @router.post("/", response_model=User)
 def create_user(user: CreateUser, db: Session = Depends(get_db)):
     if db.query(UserModel).filter(UserModel.email == user.email).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
     if db.query(UserModel).filter(UserModel.username == user.username).first():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username already taken"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already taken")
 
     hashed_password = hash_password(user.password)
 
@@ -121,15 +106,14 @@ def create_user(user: CreateUser, db: Session = Depends(get_db)):
     db.refresh(new_user)
     return new_user
 
-# ---- Route: PATCH /users ----
+
+# ---- PATCH /users/{user_id} ----
+# Update fields for an existing user.
 @router.patch("/{user_id}", response_model=User)
 def update_user(user_id: int, updates: UpdateUser, db: Session = Depends(get_db)):
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     if updates.password:
         user.hashed_password = hash_password(updates.password)
@@ -150,28 +134,27 @@ def update_user(user_id: int, updates: UpdateUser, db: Session = Depends(get_db)
     db.refresh(user)
     return user
 
-# ---- Route: DELETE /users ----
+
+# ---- DELETE /users/{user_id} ----
+# Soft-deactivate a user account.
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 def deactivate_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.is_active = False
     db.commit()
     return
 
+
+# ---- DELETE /users/{user_id}/forget ----
+# Anonymise and deactivate a user to comply with "right to be forgotten".
 @router.delete("/{user_id}/forget", status_code=status.HTTP_204_NO_CONTENT)
 def forget_user(user_id: int, db: Session = Depends(get_db)):
     user = db.query(UserModel).filter(UserModel.id == user_id).first()
     if not user:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     user.username = f"deleted_user_{user_id}"
     user.email = f"deleted_user_{user_id}@example.com"

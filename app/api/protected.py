@@ -1,13 +1,39 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Cookie
-from sqlalchemy.orm import Session
-from app.db import get_db
-from app.models.user import User as UserModel
-from pydantic import BaseModel, EmailStr
-from app.auth.password import verify_password
-from app.auth.jwt import create_access_token, create_refresh_token, verify_token
+"""
+protected.py
+
+Handles authenticated user routes for FastAPI.
+
+Includes:
+- Login with token generation (access + refresh).
+- Access to protected user info (via `/me`).
+- Refreshing access tokens via cookie-stored refresh token.
+- Sliding session simulation by issuing a new access token when the access token is expired but a valid refresh token exists.
+"""
+
 from datetime import timedelta
 from typing import Optional
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    status,
+    Response,
+    Request,
+    Cookie,
+)
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, EmailStr
+
+from app.db import get_db
+from app.models.user import User as UserModel
 from app.schemas.user import User  # for response_model in /me
+from app.auth.password import verify_password
+from app.auth.jwt import (
+    create_access_token,
+    create_refresh_token,
+    verify_token,
+)
 
 router = APIRouter(
     prefix="/auth",
@@ -17,16 +43,21 @@ router = APIRouter(
 ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
-# ---- Pydantic Schema ----
+
+# ---- Pydantic Schemas ----
+
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
 
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-# ---- Route: POST /auth/login ----
+
+# ---- POST /auth/login ----
+# Logs in a user by validating credentials and setting tokens.
 @router.post("/login", response_model=LoginResponse)
 def login_user(
     login: LoginRequest,
@@ -44,7 +75,6 @@ def login_user(
     access_token = create_access_token({"sub": str(user.id)})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
-    # Set refresh token as HTTP-only cookie
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -56,7 +86,9 @@ def login_user(
 
     return {"access_token": access_token}
 
-# ---- Dependency: Get current user from token ----
+
+# ---- Dependency: get_current_user ----
+# Validates access token or refresh token, simulates sliding sessions.
 def get_current_user(
     request: Request,
     db: Session = Depends(get_db),
@@ -71,14 +103,13 @@ def get_current_user(
     try:
         token_data = verify_token(token)
     except HTTPException:
-        # Try refresh token if access token is expired
         if not refresh_token:
             raise
+        # Fallback to refresh token if access token expired
         token_data = verify_token(refresh_token)
         user = db.query(UserModel).filter(UserModel.id == int(token_data.sub)).first()
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
-        # This simulates sliding session behaviour: re-issue new access token
         new_access_token = create_access_token({"sub": str(user.id)})
         request.state.new_access_token = new_access_token
         return user
@@ -88,12 +119,14 @@ def get_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
+
+# ---- GET /auth/me ----
+# Returns the current authenticated user and optionally a new token.
 @router.get("/me")
-def read_current_user(
+def read_current_user_full(
     request: Request,
     user: UserModel = Depends(get_current_user)
 ):
-    # If we generated a new access token, include it in the response
     new_token = getattr(request.state, "new_access_token", None)
     return {
         "user": {
@@ -104,10 +137,16 @@ def read_current_user(
         "new_access_token": new_token
     }
 
+
+# ---- GET /auth/me (simplified version with schema) ----
+# Returns the current authenticated user as a Pydantic response model.
 @router.get("/me", response_model=User)
 def read_current_user(current_user: UserModel = Depends(get_current_user)):
     return current_user
 
+
+# ---- POST /auth/refresh ----
+# Refreshes the access token using a valid refresh token from cookies.
 @router.post("/refresh", response_model=LoginResponse)
 def refresh_token_route(
     refresh_token: Optional[str] = Cookie(default=None),

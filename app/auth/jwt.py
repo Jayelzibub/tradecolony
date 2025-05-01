@@ -1,40 +1,63 @@
+"""
+jwt.py
+
+Handles JWT creation and validation for both access and refresh tokens.
+
+Includes:
+- Token generation (`create_access_token`, `create_refresh_token`)
+- Token verification and decoding
+- Use of Pydantic model for structured payload access
+
+Relies on:
+- PyJWT for encoding/decoding
+- Settings config for secret key, algorithm, and expiry settings
+"""
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-import jwt
+import secrets
+import os
+
+import jwt  # PyJWT
 from fastapi import HTTPException, status
 from pydantic import BaseModel
-import os
-from app.core.config import settings
-import secrets
 
+from app.core.config import settings
+
+# Configuration
 SECRET_KEY = settings.JWT_SECRET_KEY
 ALGORITHM = settings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_MINUTES = settings.REFRESH_TOKEN_EXPIRE_MINUTES
 
+
+# Pydantic model for decoded JWT data
 class TokenData(BaseModel):
     sub: str
     exp: datetime
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
-    to_encode = data.copy()
 
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+# Generates an access token with optional expiry override
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({
         "exp": expire,
         "iat": datetime.now(timezone.utc),
-        "jti": secrets.token_urlsafe(8)  # adds randomness
+        "jti": secrets.token_urlsafe(8),  # Adds randomness to reduce replay attacks
     })
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-    encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET_KEY, algorithm=settings.ALGORITHM)
-    return encoded_jwt
 
-def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None):
+# Generates a refresh token with optional expiry override
+def create_refresh_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
+
+# Verifies a JWT and returns typed TokenData
 def verify_token(token: str) -> TokenData:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -44,7 +67,7 @@ def verify_token(token: str) -> TokenData:
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-from jose import jwt as jose_jwt
 
+# (Optional) Returns decoded payload as a raw dict without validation
 def decode_token(token: str) -> dict:
-    return jose_jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])

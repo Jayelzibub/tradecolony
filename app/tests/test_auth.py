@@ -1,14 +1,24 @@
+"""
+test_auth.py
+
+Covers authentication behaviours:
+- Successful login
+- Incorrect credentials
+- Inactive or forgotten accounts
+- Missing input fields
+"""
+
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.orm import Session
+
 from app.main import app
 from app.models.user import User
 from app.auth.password import hash_password
-from app.db import get_db  # Required for dependency override
+from app.db import get_db  # For dependency override
 
-# ----------------------------
-# ✅ Test: Successful login
-# ----------------------------
+
+# --- ✅ Test: Successful login ---
 @pytest.mark.asyncio
 async def test_successful_login(db: Session):
     """
@@ -23,19 +33,15 @@ async def test_successful_login(db: Session):
         email=email,
         hashed_password=hashed_password,
         is_active=True,
-        is_forgotten=False
+        is_forgotten=False,
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/auth/login", json={"email": email, "password": password})
 
     assert response.status_code == 200
@@ -44,9 +50,8 @@ async def test_successful_login(db: Session):
     assert data["token_type"] == "bearer"
     assert "set-cookie" in response.headers
 
-# ----------------------------
-# ❌ Test: Incorrect password
-# ----------------------------
+
+# --- ❌ Test: Incorrect password ---
 @pytest.mark.asyncio
 async def test_login_wrong_password(db: Session):
     """
@@ -54,51 +59,40 @@ async def test_login_wrong_password(db: Session):
     """
     email = "wrongpass@example.com"
     password = "correctpassword"
-    wrong_password = "incorrectpassword"
 
     user = User(
         username="wrongpassuser",
         email=email,
         hashed_password=hash_password(password),
         is_active=True,
-        is_forgotten=False
+        is_forgotten=False,
     )
     db.add(user)
     db.commit()
 
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post("/auth/login", json={"email": email, "password": wrong_password})
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/auth/login", json={"email": email, "password": "incorrectpassword"})
 
     assert response.status_code == 401
 
-# ----------------------------
-# ❌ Test: User does not exist
-# ----------------------------
+
+# --- ❌ Test: Nonexistent user ---
 @pytest.mark.asyncio
 async def test_login_nonexistent_user(db: Session):
     """
     Expect: Login fails with 401 if email is not in database.
     """
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/auth/login", json={"email": "ghost@example.com", "password": "nopass"})
 
     assert response.status_code == 401
 
-# ----------------------------
-# ❌ Test: Inactive user
-# ----------------------------
+
+# --- ❌ Test: Inactive user ---
 @pytest.mark.asyncio
 async def test_login_inactive_user(db: Session):
     """
@@ -112,25 +106,20 @@ async def test_login_inactive_user(db: Session):
         email=email,
         hashed_password=hash_password(password),
         is_active=False,
-        is_forgotten=False
+        is_forgotten=False,
     )
     db.add(user)
     db.commit()
 
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/auth/login", json={"email": email, "password": password})
 
     assert response.status_code == 403
 
-# ----------------------------
-# ❌ Test: Forgotten user
-# ----------------------------
+
+# --- ❌ Test: Forgotten user ---
 @pytest.mark.asyncio
 async def test_login_forgotten_user(db: Session):
     """
@@ -144,37 +133,28 @@ async def test_login_forgotten_user(db: Session):
         email=email,
         hashed_password=hash_password(password),
         is_active=True,
-        is_forgotten=True
+        is_forgotten=True,
     )
     db.add(user)
     db.commit()
 
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/auth/login", json={"email": email, "password": password})
 
     assert response.status_code == 403
 
-# ----------------------------
-# ❌ Test: Missing fields
-# ----------------------------
+
+# --- ❌ Test: Missing fields ---
 @pytest.mark.asyncio
 async def test_login_missing_fields(db: Session):
     """
     Expect: Login fails with 422 if email/password fields are missing (validation error).
     """
-    def override_get_db():
-        yield db
+    app.dependency_overrides[get_db] = lambda: (yield db)
 
-    app.dependency_overrides[get_db] = override_get_db
-
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/auth/login", json={})
 
     assert response.status_code == 422

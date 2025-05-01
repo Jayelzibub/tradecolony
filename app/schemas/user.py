@@ -1,7 +1,21 @@
-from pydantic import BaseModel, EmailStr, ConfigDict
-from typing import Optional
-from datetime import datetime
+"""
+schemas/user.py
 
+Defines Pydantic models for user-related data validation and serialization.
+
+Includes:
+- Public user model (`User`)
+- Creation and update input schemas
+- Auth request/response models
+"""
+
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, EmailStr, ConfigDict
+
+
+# ---- Output schema for user data ----
 class User(BaseModel):
     id: int
     username: str
@@ -18,6 +32,8 @@ class User(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+# ---- Input schema for user creation ----
 class CreateUser(BaseModel):
     username: str
     email: EmailStr
@@ -26,6 +42,8 @@ class CreateUser(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+# ---- Input schema for partial user update ----
 class UpdateUser(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
@@ -37,10 +55,14 @@ class UpdateUser(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+# ---- Input schema for login ----
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+
+# ---- Output schema for login response ----
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
