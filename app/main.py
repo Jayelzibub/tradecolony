@@ -6,7 +6,7 @@ from app.api import protected
 
 load_dotenv()
 
-app = FastAPI(title=os.getenv("PROJECT_NAME"))
+app = FastAPI(title=os.getenv("PROJECT_NAME", "TradeColony API"))
 
 app.include_router(protected.router)
 app.include_router(routes.router)

@@ -31,3 +31,13 @@ def get_db():
         yield db
     finally:
         db.close()
+
+from app.models.user import User
+from app.models.token import RefreshToken  # make sure it's imported
+
+import sys
+
+if "pytest" not in sys.modules:
+    from app.models.user import User
+    from app.models.token import RefreshToken
+    Base.metadata.create_all(bind=engine)
